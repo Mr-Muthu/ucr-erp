@@ -1,0 +1,320 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Auth / Staff ────────────────────────────────────────────────
+
+enum Role {
+  ADMIN
+  MANAGER
+  STAFF
+  ACCOUNTANT
+  DRIVER
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+}
+
+model User {
+  id        String     @id @default(cuid())
+  name      String
+  email     String     @unique
+  password  String
+  phone     String?
+  role      Role       @default(STAFF)
+  status    UserStatus @default(ACTIVE)
+  driver    Driver?
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+}
+
+// ─── Fleet management ────────────────────────────────────────────
+
+enum VehicleStatus {
+  AVAILABLE
+  BOOKED
+  IN_MAINTENANCE
+  OUT_OF_SERVICE
+}
+
+enum FuelType {
+  PETROL
+  DIESEL
+  ELECTRIC
+  HYBRID
+  CNG
+}
+
+enum Transmission {
+  MANUAL
+  AUTOMATIC
+}
+
+model Vehicle {
+  id               String        @id @default(cuid())
+  regNumber        String        @unique
+  make             String
+  model            String
+  year             Int
+  category         String
+  seatingCapacity  Int
+  fuelType         FuelType      @default(PETROL)
+  transmission     Transmission  @default(MANUAL)
+  color            String?
+  odometer         Int           @default(0)
+  status           VehicleStatus @default(AVAILABLE)
+  dailyRate        Decimal       @db.Decimal(10, 2)
+  hourlyRate       Decimal?      @db.Decimal(10, 2)
+  purchaseDate     DateTime?
+  insuranceExpiry  DateTime?
+  permitExpiry     DateTime?
+  pucExpiry        DateTime?
+  notes            String?
+  documents        VehicleDocument[]
+  maintenance      MaintenanceRecord[]
+  bookings         Booking[]
+  tripAssignments  TripAssignment[]
+  expenses         Expense[]
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+}
+
+enum DocumentType {
+  RC
+  INSURANCE
+  PERMIT
+  PUC
+  FITNESS
+  OTHER
+}
+
+model VehicleDocument {
+  id             String       @id @default(cuid())
+  vehicle        Vehicle      @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  vehicleId      String
+  type           DocumentType
+  documentNumber String?
+  issueDate      DateTime?
+  expiryDate     DateTime?
+  fileUrl        String?
+  createdAt      DateTime     @default(now())
+}
+
+enum MaintenanceType {
+  SERVICE
+  REPAIR
+  INSPECTION
+}
+
+enum MaintenanceStatus {
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+}
+
+model MaintenanceRecord {
+  id               String             @id @default(cuid())
+  vehicle          Vehicle            @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  vehicleId        String
+  type             MaintenanceType    @default(SERVICE)
+  description      String
+  cost             Decimal            @db.Decimal(10, 2) @default(0)
+  odometerAtService Int?
+  serviceDate      DateTime           @default(now())
+  nextServiceDue   DateTime?
+  vendor           String?
+  status           MaintenanceStatus  @default(SCHEDULED)
+  createdAt        DateTime           @default(now())
+}
+
+// ─── Customers ───────────────────────────────────────────────────
+
+model Customer {
+  id              String    @id @default(cuid())
+  name            String
+  email           String?
+  phone           String    @unique
+  address         String?
+  idProofType     String?
+  idProofNumber   String?
+  licenseNumber   String?
+  licenseExpiry   DateTime?
+  bookings        Booking[]
+  invoices        Invoice[]
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+}
+
+// ─── Drivers ─────────────────────────────────────────────────────
+
+enum DriverStatus {
+  ACTIVE
+  ON_TRIP
+  ON_LEAVE
+  INACTIVE
+}
+
+model Driver {
+  id             String           @id @default(cuid())
+  user           User?            @relation(fields: [userId], references: [id])
+  userId         String?          @unique
+  name           String
+  phone          String           @unique
+  licenseNumber  String           @unique
+  licenseExpiry  DateTime?
+  address        String?
+  joiningDate    DateTime         @default(now())
+  status         DriverStatus     @default(ACTIVE)
+  salary         Decimal?         @db.Decimal(10, 2)
+  bookings       Booking[]
+  tripAssignments TripAssignment[]
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+}
+
+// ─── Bookings ────────────────────────────────────────────────────
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  ONGOING
+  COMPLETED
+  CANCELLED
+}
+
+enum RateType {
+  DAILY
+  HOURLY
+  TRIP
+}
+
+model Booking {
+  id                    String        @id @default(cuid())
+  bookingNumber         String        @unique
+  customer              Customer      @relation(fields: [customerId], references: [id])
+  customerId            String
+  vehicle               Vehicle       @relation(fields: [vehicleId], references: [id])
+  vehicleId             String
+  driver                Driver?       @relation(fields: [driverId], references: [id])
+  driverId              String?
+  pickupLocation        String
+  dropLocation          String?
+  pickupDateTime        DateTime
+  dropDateTime          DateTime
+  actualPickupDateTime  DateTime?
+  actualDropDateTime    DateTime?
+  status                BookingStatus @default(PENDING)
+  rateType              RateType      @default(DAILY)
+  rateAmount            Decimal       @db.Decimal(10, 2)
+  totalAmount           Decimal       @db.Decimal(10, 2)
+  advanceAmount         Decimal       @db.Decimal(10, 2) @default(0)
+  notes                 String?
+  tripAssignment        TripAssignment?
+  invoice               Invoice?
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+}
+
+model TripAssignment {
+  id             String    @id @default(cuid())
+  booking        Booking   @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  bookingId      String    @unique
+  driver         Driver    @relation(fields: [driverId], references: [id])
+  driverId       String
+  vehicle        Vehicle   @relation(fields: [vehicleId], references: [id])
+  vehicleId      String
+  startOdometer  Int?
+  endOdometer    Int?
+  startTime      DateTime?
+  endTime        DateTime?
+  createdAt      DateTime  @default(now())
+}
+
+// ─── Billing / Invoicing / Payments ─────────────────────────────
+
+enum InvoiceStatus {
+  DRAFT
+  SENT
+  PARTIALLY_PAID
+  PAID
+  OVERDUE
+  CANCELLED
+}
+
+model Invoice {
+  id             String        @id @default(cuid())
+  invoiceNumber  String        @unique
+  booking        Booking       @relation(fields: [bookingId], references: [id])
+  bookingId      String        @unique
+  customer       Customer      @relation(fields: [customerId], references: [id])
+  customerId     String
+  items          InvoiceItem[]
+  subtotal       Decimal       @db.Decimal(10, 2)
+  taxAmount      Decimal       @db.Decimal(10, 2) @default(0)
+  discount       Decimal       @db.Decimal(10, 2) @default(0)
+  totalAmount    Decimal       @db.Decimal(10, 2)
+  amountPaid     Decimal       @db.Decimal(10, 2) @default(0)
+  status         InvoiceStatus @default(DRAFT)
+  issuedDate     DateTime      @default(now())
+  dueDate        DateTime?
+  payments       Payment[]
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+}
+
+model InvoiceItem {
+  id          String  @id @default(cuid())
+  invoice     Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  invoiceId   String
+  description String
+  quantity    Int     @default(1)
+  unitPrice   Decimal @db.Decimal(10, 2)
+  amount      Decimal @db.Decimal(10, 2)
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  UPI
+  BANK_TRANSFER
+  ONLINE
+}
+
+model Payment {
+  id         String        @id @default(cuid())
+  invoice    Invoice       @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  invoiceId  String
+  amount     Decimal       @db.Decimal(10, 2)
+  method     PaymentMethod @default(CASH)
+  reference  String?
+  paidAt     DateTime      @default(now())
+  receivedBy String?
+  createdAt  DateTime      @default(now())
+}
+
+enum ExpenseCategory {
+  FUEL
+  MAINTENANCE
+  SALARY
+  INSURANCE
+  MISC
+}
+
+model Expense {
+  id          String          @id @default(cuid())
+  category    ExpenseCategory
+  vehicle     Vehicle?        @relation(fields: [vehicleId], references: [id])
+  vehicleId   String?
+  description String
+  amount      Decimal         @db.Decimal(10, 2)
+  expenseDate DateTime        @default(now())
+  paidBy      String?
+  createdAt   DateTime        @default(now())
+}
