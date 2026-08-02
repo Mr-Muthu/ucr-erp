@@ -1,320 +1,1302 @@
+// ─────────────────────────────────────────────────────────────────
+// UCR Fleet ERP — Phase 1 domain model
+//
+// Notes on things Prisma can't express directly (see prisma/sql/*.sql):
+//  - Exclusion constraints preventing a vehicle from being double-booked
+//    AND double-deployed (cross-table: Booking vs DeploymentVehicleSegment).
+//  - CHECK constraints enforcing "exactly one counterparty" on
+//    VehicleDeployment / MonthlyReconciliation and "exactly one actor"
+//    on AuditLog.
+// Money fields snapshot rate-card terms into `rateSnapshotJson` at creation
+// time so later rate-card edits never retroactively change historical
+// billing — the FK to the rate card item is kept only for traceability.
+// ─────────────────────────────────────────────────────────────────
+
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [btree_gist]
 }
 
-// ─── Auth / Staff ────────────────────────────────────────────────
+// ───────────────────────── Enums ─────────────────────────
 
-enum Role {
-  ADMIN
+enum StaffRole {
+  OWNER
   MANAGER
-  STAFF
-  ACCOUNTANT
-  DRIVER
+  OPS
+  ACCOUNTS
+  VIEWER
 }
 
-enum UserStatus {
-  ACTIVE
-  INACTIVE
+enum VehicleOwnership {
+  OWNED
+  LEASED
+  SUBVENDOR
 }
-
-model User {
-  id        String     @id @default(cuid())
-  name      String
-  email     String     @unique
-  password  String
-  phone     String?
-  role      Role       @default(STAFF)
-  status    UserStatus @default(ACTIVE)
-  driver    Driver?
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
-}
-
-// ─── Fleet management ────────────────────────────────────────────
 
 enum VehicleStatus {
   AVAILABLE
-  BOOKED
+  DEPLOYED
+  ON_TRIP
   IN_MAINTENANCE
-  OUT_OF_SERVICE
+  BLOCKED
+  RETIRED
 }
 
-enum FuelType {
-  PETROL
-  DIESEL
-  ELECTRIC
-  HYBRID
-  CNG
-}
-
-enum Transmission {
-  MANUAL
-  AUTOMATIC
-}
-
-model Vehicle {
-  id               String        @id @default(cuid())
-  regNumber        String        @unique
-  make             String
-  model            String
-  year             Int
-  category         String
-  seatingCapacity  Int
-  fuelType         FuelType      @default(PETROL)
-  transmission     Transmission  @default(MANUAL)
-  color            String?
-  odometer         Int           @default(0)
-  status           VehicleStatus @default(AVAILABLE)
-  dailyRate        Decimal       @db.Decimal(10, 2)
-  hourlyRate       Decimal?      @db.Decimal(10, 2)
-  purchaseDate     DateTime?
-  insuranceExpiry  DateTime?
-  permitExpiry     DateTime?
-  pucExpiry        DateTime?
-  notes            String?
-  documents        VehicleDocument[]
-  maintenance      MaintenanceRecord[]
-  bookings         Booking[]
-  tripAssignments  TripAssignment[]
-  expenses         Expense[]
-  createdAt        DateTime      @default(now())
-  updatedAt        DateTime      @updatedAt
-}
-
-enum DocumentType {
+enum VehicleDocType {
   RC
   INSURANCE
-  PERMIT
   PUC
+  PERMIT
   FITNESS
+  TAX
+}
+
+enum OdometerSource {
+  DUTY_START
+  DUTY_END
+  SERVICE
+  MANUAL
+}
+
+enum DriverDocType {
+  BADGE
+  POLICE_VERIFICATION
   OTHER
 }
 
-model VehicleDocument {
-  id             String       @id @default(cuid())
-  vehicle        Vehicle      @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
-  vehicleId      String
-  type           DocumentType
-  documentNumber String?
-  issueDate      DateTime?
-  expiryDate     DateTime?
-  fileUrl        String?
-  createdAt      DateTime     @default(now())
+enum DriverPayoutModel {
+  MONTHLY_SALARY
+  PER_DUTY
+  HYBRID
 }
-
-enum MaintenanceType {
-  SERVICE
-  REPAIR
-  INSPECTION
-}
-
-enum MaintenanceStatus {
-  SCHEDULED
-  IN_PROGRESS
-  COMPLETED
-}
-
-model MaintenanceRecord {
-  id               String             @id @default(cuid())
-  vehicle          Vehicle            @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
-  vehicleId        String
-  type             MaintenanceType    @default(SERVICE)
-  description      String
-  cost             Decimal            @db.Decimal(10, 2) @default(0)
-  odometerAtService Int?
-  serviceDate      DateTime           @default(now())
-  nextServiceDue   DateTime?
-  vendor           String?
-  status           MaintenanceStatus  @default(SCHEDULED)
-  createdAt        DateTime           @default(now())
-}
-
-// ─── Customers ───────────────────────────────────────────────────
-
-model Customer {
-  id              String    @id @default(cuid())
-  name            String
-  email           String?
-  phone           String    @unique
-  address         String?
-  idProofType     String?
-  idProofNumber   String?
-  licenseNumber   String?
-  licenseExpiry   DateTime?
-  bookings        Booking[]
-  invoices        Invoice[]
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
-}
-
-// ─── Drivers ─────────────────────────────────────────────────────
 
 enum DriverStatus {
   ACTIVE
-  ON_TRIP
   ON_LEAVE
   INACTIVE
 }
 
-model Driver {
-  id             String           @id @default(cuid())
-  user           User?            @relation(fields: [userId], references: [id])
-  userId         String?          @unique
-  name           String
-  phone          String           @unique
-  licenseNumber  String           @unique
-  licenseExpiry  DateTime?
-  address        String?
-  joiningDate    DateTime         @default(now())
-  status         DriverStatus     @default(ACTIVE)
-  salary         Decimal?         @db.Decimal(10, 2)
-  bookings       Booking[]
-  tripAssignments TripAssignment[]
-  createdAt      DateTime         @default(now())
-  updatedAt      DateTime         @updatedAt
+enum CustomerType {
+  INDIVIDUAL
+  BUSINESS
 }
 
-// ─── Bookings ────────────────────────────────────────────────────
+enum VendorStatus {
+  ACTIVE
+  INACTIVE
+  BLACKLISTED
+}
+
+enum EngagementType {
+  DEDICATED_MONTHLY
+  SPOT_DUTY
+}
+
+enum FuelResponsibility {
+  VENDOR_FUEL
+  UCR_FUEL
+}
+
+enum CounterpartyType {
+  VENDOR
+  CUSTOMER
+}
+
+enum DutyStatus {
+  ASSIGNED
+  ACCEPTED
+  DECLINED
+  STARTED
+  COMPLETED
+  SUBMITTED
+  REJECTED
+  APPROVED
+  DISPUTED
+  RESOLVED
+  BILLED
+}
+
+enum DutyOrigin {
+  BOOKING
+  DEPLOYMENT
+  VENDOR_SPOT
+}
+
+enum DutyExpenseType {
+  TOLL
+  PARKING
+  OTHER
+}
+
+enum BookingType {
+  LOCAL_PACKAGE
+  OUTSTATION
+  AIRPORT_TRANSFER
+}
 
 enum BookingStatus {
-  PENDING
+  INQUIRY
+  QUOTED
   CONFIRMED
-  ONGOING
+  DUTY_ASSIGNED
+  IN_PROGRESS
   COMPLETED
+  CLOSED
   CANCELLED
+  NO_SHOW
 }
 
-enum RateType {
-  DAILY
-  HOURLY
-  TRIP
+enum RateCardType {
+  LOCAL_PACKAGE
+  OUTSTATION
+  AIRPORT_TRANSFER
+  FIXED_DUTY_MONTHLY
 }
 
-model Booking {
-  id                    String        @id @default(cuid())
-  bookingNumber         String        @unique
-  customer              Customer      @relation(fields: [customerId], references: [id])
-  customerId            String
-  vehicle               Vehicle       @relation(fields: [vehicleId], references: [id])
-  vehicleId             String
-  driver                Driver?       @relation(fields: [driverId], references: [id])
-  driverId              String?
-  pickupLocation        String
-  dropLocation          String?
-  pickupDateTime        DateTime
-  dropDateTime          DateTime
-  actualPickupDateTime  DateTime?
-  actualDropDateTime    DateTime?
-  status                BookingStatus @default(PENDING)
-  rateType              RateType      @default(DAILY)
-  rateAmount            Decimal       @db.Decimal(10, 2)
-  totalAmount           Decimal       @db.Decimal(10, 2)
-  advanceAmount         Decimal       @db.Decimal(10, 2) @default(0)
-  notes                 String?
-  tripAssignment        TripAssignment?
-  invoice               Invoice?
-  createdAt             DateTime      @default(now())
-  updatedAt             DateTime      @updatedAt
+enum ReconciliationStatus {
+  DRAFT
+  STATEMENT_SENT
+  DISPUTED
+  FINALIZED
+  INVOICED
 }
 
-model TripAssignment {
-  id             String    @id @default(cuid())
-  booking        Booking   @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-  bookingId      String    @unique
-  driver         Driver    @relation(fields: [driverId], references: [id])
-  driverId       String
-  vehicle        Vehicle   @relation(fields: [vehicleId], references: [id])
-  vehicleId      String
-  startOdometer  Int?
-  endOdometer    Int?
-  startTime      DateTime?
-  endTime        DateTime?
-  createdAt      DateTime  @default(now())
+enum ReconLineDisputeStatus {
+  NONE
+  OPEN
+  ADJUSTED
+  ACCEPTED
 }
 
-// ─── Billing / Invoicing / Payments ─────────────────────────────
+enum InvoiceType {
+  VENDOR_MONTHLY
+  CUSTOMER_FIXED_DUTY_MONTHLY
+  BOOKING
+}
 
 enum InvoiceStatus {
   DRAFT
-  SENT
+  ISSUED
   PARTIALLY_PAID
   PAID
   OVERDUE
-  CANCELLED
+  VOID
 }
 
-model Invoice {
-  id             String        @id @default(cuid())
-  invoiceNumber  String        @unique
-  booking        Booking       @relation(fields: [bookingId], references: [id])
-  bookingId      String        @unique
-  customer       Customer      @relation(fields: [customerId], references: [id])
-  customerId     String
-  items          InvoiceItem[]
-  subtotal       Decimal       @db.Decimal(10, 2)
-  taxAmount      Decimal       @db.Decimal(10, 2) @default(0)
-  discount       Decimal       @db.Decimal(10, 2) @default(0)
-  totalAmount    Decimal       @db.Decimal(10, 2)
-  amountPaid     Decimal       @db.Decimal(10, 2) @default(0)
-  status         InvoiceStatus @default(DRAFT)
-  issuedDate     DateTime      @default(now())
-  dueDate        DateTime?
-  payments       Payment[]
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
+enum TaxType {
+  CGST_SGST
+  IGST
 }
 
-model InvoiceItem {
-  id          String  @id @default(cuid())
-  invoice     Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
-  invoiceId   String
-  description String
-  quantity    Int     @default(1)
-  unitPrice   Decimal @db.Decimal(10, 2)
-  amount      Decimal @db.Decimal(10, 2)
-}
-
-enum PaymentMethod {
+enum PaymentMode {
   CASH
-  CARD
   UPI
-  BANK_TRANSFER
-  ONLINE
-}
-
-model Payment {
-  id         String        @id @default(cuid())
-  invoice    Invoice       @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
-  invoiceId  String
-  amount     Decimal       @db.Decimal(10, 2)
-  method     PaymentMethod @default(CASH)
-  reference  String?
-  paidAt     DateTime      @default(now())
-  receivedBy String?
-  createdAt  DateTime      @default(now())
+  BANK
+  CARD
+  CHEQUE
 }
 
 enum ExpenseCategory {
   FUEL
+  TOLL
   MAINTENANCE
-  SALARY
   INSURANCE
+  EMI
+  SALARY
+  CHALLAN
   MISC
 }
 
-model Expense {
+enum MaintenanceJobType {
+  SCHEDULED
+  BREAKDOWN
+}
+
+enum MaintenanceJobStatus {
+  OPEN
+  IN_PROGRESS
+  DONE
+  CANCELLED
+}
+
+enum ChallanStatus {
+  OPEN
+  RECOVERABLE_PENDING
+  RECOVERED
+  WAIVED
+  PAID
+}
+
+enum DriverPayableType {
+  BATTA
+  NIGHT_HALT
+  REIMBURSEMENT
+  ADVANCE
+  ADJUSTMENT
+}
+
+enum AuditActorType {
+  STAFF
+  DRIVER
+  SYSTEM
+}
+
+enum NotificationType {
+  VEHICLE_DOCUMENT_EXPIRY
+  DRIVER_LICENSE_EXPIRY
+  INVOICE_OVERDUE
+}
+
+enum NotificationChannel {
+  EMAIL
+  PUSH
+  LOG
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+// ───────────────────────── Org & access ─────────────────────────
+
+model Branch {
+  id        String   @id @default(cuid())
+  name      String
+  code      String   @unique
+  address   String?
+  gstin     String?
+  stateCode String
+  isDefault Boolean  @default(false)
+  createdAt DateTime @db.Timestamptz(3) @default(now())
+  updatedAt DateTime @db.Timestamptz(3) @updatedAt
+  deletedAt DateTime? @db.Timestamptz(3)
+
+  users           User[]
+  vehicles        Vehicle[]
+  drivers         Driver[]
+  vendors         Vendor[]
+  customers       Customer[]
+  bookings        Booking[]
+  deployments     VehicleDeployment[]
+  duties          Duty[]
+  invoices        Invoice[]
+  payments        Payment[]
+  expenses        Expense[]
+  rateCards       RateCard[]
+  reconciliations MonthlyReconciliation[]
+  notifications   Notification[]
+}
+
+model User {
+  id                  String     @id @default(cuid())
+  branchId            String
+  branch              Branch     @relation(fields: [branchId], references: [id])
+  name                String
+  email               String     @unique
+  phone               String?
+  passwordHash        String
+  role                StaffRole  @default(OPS)
+  isActive            Boolean    @default(true)
+  failedLoginAttempts Int        @default(0)
+  lockedUntil         DateTime? @db.Timestamptz(3)
+  lastLoginAt         DateTime? @db.Timestamptz(3)
+  createdAt           DateTime @db.Timestamptz(3)   @default(now())
+  updatedAt           DateTime @db.Timestamptz(3)   @updatedAt
+  deletedAt           DateTime? @db.Timestamptz(3)
+
+  refreshTokens             RefreshToken[]
+  staffAuditLogs            AuditLog[]              @relation("StaffAuditLogs")
+  vehicleDocumentOverrides  VehicleDocument[]
+  customerBlacklistOverrides Customer[]
+  finalizedReconciliations  MonthlyReconciliation[]
+  voidedInvoices            Invoice[]
+  issuedCreditNotes         CreditNote[]
+  receivedPayments          Payment[]
+  paidExpenses              Expense[]
+  securityDepositEntries    SecurityDepositEntry[]
+  approvedBookingDiscounts  Booking[]
+  driverLicenseOverrides    Driver[]                @relation("DriverLicenseOverrides")
+
+  @@index([branchId])
+}
+
+model DriverAccount {
+  id                String    @id @default(cuid())
+  driverId          String    @unique
+  driver            Driver    @relation(fields: [driverId], references: [id])
+  phone             String    @unique
+  pinHash           String
+  isActive          Boolean   @default(true)
+  failedPinAttempts Int       @default(0)
+  lockedUntil       DateTime? @db.Timestamptz(3)
+  lastLoginAt       DateTime? @db.Timestamptz(3)
+  createdAt         DateTime @db.Timestamptz(3)  @default(now())
+  updatedAt         DateTime @db.Timestamptz(3)  @updatedAt
+
+  devices       DriverDevice[]
+  refreshTokens RefreshToken[]
+  auditLogs     AuditLog[]     @relation("DriverAuditLogs")
+}
+
+model DriverDevice {
+  id              String        @id @default(cuid())
+  driverAccountId String
+  driverAccount   DriverAccount @relation(fields: [driverAccountId], references: [id])
+  // App-generated, locally-persisted installation id — the natural key for
+  // "same device logging in again" so repeat logins reuse one row instead
+  // of creating a new device every time.
+  clientDeviceId  String
+  expoPushToken   String?
+  deviceModel     String?
+  appVersion      String?
+  osVersion       String?
+  registeredAt    DateTime @db.Timestamptz(3)      @default(now())
+  lastSeenAt      DateTime? @db.Timestamptz(3)
+  isActive        Boolean       @default(true)
+
+  refreshTokens RefreshToken[]
+
+  @@unique([driverAccountId, clientDeviceId])
+  @@index([driverAccountId])
+}
+
+// Shared refresh-token table for staff + drivers. Driver tokens are
+// device-bound (driverDeviceId set) so deactivating a driver or revoking a
+// device kills the session; staff tokens are not device-bound.
+model RefreshToken {
+  id                String         @id @default(cuid())
+  tokenHash         String         @unique
+  userId            String?
+  user              User?          @relation(fields: [userId], references: [id])
+  driverAccountId   String?
+  driverAccount     DriverAccount? @relation(fields: [driverAccountId], references: [id])
+  driverDeviceId    String?
+  driverDevice      DriverDevice?  @relation(fields: [driverDeviceId], references: [id])
+  expiresAt         DateTime @db.Timestamptz(3)
+  revokedAt         DateTime? @db.Timestamptz(3)
+  replacedByTokenId String?
+  createdAt         DateTime @db.Timestamptz(3)       @default(now())
+  createdByIp       String?
+
+  @@index([userId])
+  @@index([driverAccountId])
+}
+
+// One row per mutation, actor is exactly one of staffUserId / driverAccountId
+// (SYSTEM actor type has neither) — enforced via CHECK constraint, see
+// prisma/sql/constraints.sql.
+model AuditLog {
+  id              String         @id @default(cuid())
+  actorType       AuditActorType
+  staffUserId     String?
+  staffUser       User?          @relation("StaffAuditLogs", fields: [staffUserId], references: [id])
+  driverAccountId String?
+  driverAccount   DriverAccount? @relation("DriverAuditLogs", fields: [driverAccountId], references: [id])
+  entity          String
+  entityId        String
+  action          String
+  beforeJson      Json?
+  afterJson       Json?
+  ipAddress       String?
+  deviceInfo      String?
+  requestId       String?
+  createdAt       DateTime @db.Timestamptz(3)       @default(now())
+
+  @@index([entity, entityId])
+  @@index([createdAt])
+}
+
+// Generic configurable business numbers (grace periods, tolerances,
+// discount thresholds, default HSN/SAC, etc.) — never hardcoded, always
+// seeded with a stated default. See prisma/seed.ts for the initial values.
+model Setting {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  value       Json
+  description String?
+  updatedAt   DateTime @db.Timestamptz(3) @updatedAt
+}
+
+// Record of every notification the system attempted to send — expiry
+// reminders, overdue-invoice nudges, etc. `dedupeKey` (type + entity + day)
+// is unique so the expiry-scan job can run daily without spamming the same
+// alert twice; a repeat run just hits the unique constraint and is skipped.
+model Notification {
+  id           String              @id @default(cuid())
+  branchId     String
+  branch       Branch              @relation(fields: [branchId], references: [id])
+  type         NotificationType
+  entity       String
+  entityId     String
+  channel      NotificationChannel
+  recipient    String
+  subject      String
+  message      String
+  status       NotificationStatus  @default(PENDING)
+  errorMessage String?
+  dedupeKey    String              @unique
+  sentAt       DateTime?           @db.Timestamptz(3)
+  createdAt    DateTime            @db.Timestamptz(3) @default(now())
+
+  @@index([branchId, status])
+  @@index([entity, entityId])
+}
+
+// ───────────────────────── Fleet & people ─────────────────────────
+
+model VehicleCategory {
+  id                     String   @id @default(cuid())
+  name                   String   @unique
+  code                   String   @unique
+  defaultSeatingCapacity Int
+  description            String?
+  createdAt              DateTime @db.Timestamptz(3) @default(now())
+  updatedAt              DateTime @db.Timestamptz(3) @updatedAt
+
+  vehicles            Vehicle[]
+  vendorRateCardItems VendorRateCardItem[]
+  rateCardItems       RateCardItem[]
+}
+
+model Vehicle {
+  id                       String           @id @default(cuid())
+  branchId                 String
+  branch                   Branch           @relation(fields: [branchId], references: [id])
+  categoryId               String
+  category                 VehicleCategory  @relation(fields: [categoryId], references: [id])
+  registrationNumber       String           @unique
+  make                     String
+  model                    String
+  variant                  String?
+  year                     Int
+  fuelType                 String
+  transmission             String
+  seats                    Int
+  currentOdometer          Int              @default(0)
+  status                   VehicleStatus    @default(AVAILABLE)
+  ownership                VehicleOwnership @default(OWNED)
+  subVendorName            String?
+  subVendorRevenueSharePct Decimal?         @db.Decimal(5, 2)
+  notes                    String?
+  createdAt                DateTime @db.Timestamptz(3)         @default(now())
+  updatedAt                DateTime @db.Timestamptz(3)         @updatedAt
+  deletedAt                DateTime? @db.Timestamptz(3)
+
+  documents          VehicleDocument[]
+  odometerLogs       OdometerLog[]
+  deploymentSegments DeploymentVehicleSegment[]
+  bookings           Booking[]
+  duties             Duty[]
+  maintenanceJobs    MaintenanceJob[]
+  expenses           Expense[]
+  challans           Challan[]
+
+  @@index([branchId, status])
+}
+
+model VehicleDocument {
+  id             String          @id @default(cuid())
+  vehicleId      String
+  vehicle        Vehicle         @relation(fields: [vehicleId], references: [id])
+  type           VehicleDocType
+  documentNumber String?
+  issueDate      DateTime? @db.Timestamptz(3)
+  expiryDate     DateTime? @db.Timestamptz(3)
+  fileKey        String?
+  overriddenById String?
+  overriddenBy   User?           @relation(fields: [overriddenById], references: [id])
+  overrideReason String?
+  overrideAt     DateTime? @db.Timestamptz(3)
+  createdAt      DateTime @db.Timestamptz(3)        @default(now())
+  updatedAt      DateTime @db.Timestamptz(3)        @updatedAt
+  deletedAt      DateTime? @db.Timestamptz(3)
+
+  @@index([vehicleId, type])
+  @@index([expiryDate])
+}
+
+model OdometerLog {
+  id             String         @id @default(cuid())
+  vehicleId      String
+  vehicle        Vehicle        @relation(fields: [vehicleId], references: [id])
+  reading        Int
+  source         OdometerSource
+  dutyId         String?
+  duty           Duty?          @relation(fields: [dutyId], references: [id])
+  photoKey       String?
+  recordedAt     DateTime @db.Timestamptz(3)       @default(now())
+  isOverride     Boolean        @default(false)
+  overrideReason String?
+  createdAt      DateTime @db.Timestamptz(3)       @default(now())
+
+  @@index([vehicleId, recordedAt])
+}
+
+model Driver {
+  id             String            @id @default(cuid())
+  branchId       String
+  branch         Branch            @relation(fields: [branchId], references: [id])
+  name           String
+  phone          String            @unique
+  licenseNumber  String            @unique
+  licenseClass   String?
+  licenseExpiry  DateTime? @db.Timestamptz(3)
+  // Same OWNER-only logged-override pattern as VehicleDocument, for an
+  // expired license blocking assignment.
+  licenseOverrideById     String?
+  licenseOverrideBy       User?             @relation("DriverLicenseOverrides", fields: [licenseOverrideById], references: [id])
+  licenseOverrideReason   String?
+  licenseOverrideAt       DateTime? @db.Timestamptz(3)
+  payoutModel    DriverPayoutModel @default(MONTHLY_SALARY)
+  monthlySalary  Decimal?          @db.Decimal(12, 2)
+  perDutyRate    Decimal?          @db.Decimal(12, 2)
+  status         DriverStatus      @default(ACTIVE)
+  address        String?
+  joiningDate    DateTime @db.Timestamptz(3)          @default(now())
+  createdAt      DateTime @db.Timestamptz(3)          @default(now())
+  updatedAt      DateTime @db.Timestamptz(3)          @updatedAt
+  deletedAt      DateTime? @db.Timestamptz(3)
+
+  account            DriverAccount?
+  documents          DriverDocument[]
+  deployments        VehicleDeployment[]
+  duties             Duty[]
+  payableEntries     DriverPayableEntry[]
+  recoveredChallans  Challan[]
+
+  @@index([branchId, status])
+}
+
+model DriverDocument {
+  id             String        @id @default(cuid())
+  driverId       String
+  driver         Driver        @relation(fields: [driverId], references: [id])
+  type           DriverDocType
+  documentNumber String?
+  expiryDate     DateTime? @db.Timestamptz(3)
+  fileKey        String?
+  createdAt      DateTime @db.Timestamptz(3)      @default(now())
+  deletedAt      DateTime? @db.Timestamptz(3)
+
+  @@index([driverId, type])
+}
+
+model Customer {
+  id                    String        @id @default(cuid())
+  branchId              String
+  branch                Branch        @relation(fields: [branchId], references: [id])
+  type                  CustomerType  @default(INDIVIDUAL)
+  name                  String
+  phone                 String
+  email                 String?
+  address               String?
+  idProofType           String?
+  idProofNumber         String?
+  idProofFileKey        String?
+  gstin                 String?
+  isBlacklisted         Boolean       @default(false)
+  blacklistOverrideById String?
+  blacklistOverrideBy   User?         @relation(fields: [blacklistOverrideById], references: [id])
+  blacklistReason       String?
+  createdAt             DateTime @db.Timestamptz(3)      @default(now())
+  updatedAt             DateTime @db.Timestamptz(3)      @updatedAt
+  deletedAt             DateTime? @db.Timestamptz(3)
+
+  bookings        Booking[]
+  deployments     VehicleDeployment[]
+  reconciliations MonthlyReconciliation[]
+  invoices        Invoice[]
+  payments        Payment[]
+  securityDeposits SecurityDeposit[]
+
+  @@index([branchId, phone])
+}
+
+// ───────────────────────── B2B vendor layer ─────────────────────────
+
+model Vendor {
+  id                     String       @id @default(cuid())
+  branchId               String
+  branch                 Branch       @relation(fields: [branchId], references: [id])
+  companyName            String
+  gstin                  String
+  billingAddress         String
+  placeOfSupplyStateCode String
+  contactName            String?
+  contactPhone           String?
+  contactEmail           String?
+  contractFileKey        String?
+  billingCycleDay        Int          @default(1)
+  creditTermDays         Int          @default(15)
+  status                 VendorStatus @default(ACTIVE)
+  createdAt              DateTime @db.Timestamptz(3)     @default(now())
+  updatedAt              DateTime @db.Timestamptz(3)     @updatedAt
+  deletedAt              DateTime? @db.Timestamptz(3)
+
+  rateCards       VendorRateCard[]
+  deployments     VehicleDeployment[]
+  duties          Duty[]
+  reconciliations MonthlyReconciliation[]
+  invoices        Invoice[]
+  payments        Payment[]
+  securityDeposits SecurityDeposit[]
+
+  @@index([branchId, status])
+}
+
+model VendorRateCard {
+  id             String         @id @default(cuid())
+  vendorId       String
+  vendor         Vendor         @relation(fields: [vendorId], references: [id])
+  engagementType EngagementType
+  effectiveFrom  DateTime @db.Timestamptz(3)
+  effectiveTo    DateTime? @db.Timestamptz(3)
+  createdAt      DateTime @db.Timestamptz(3)       @default(now())
+  updatedAt      DateTime @db.Timestamptz(3)       @updatedAt
+
+  items VendorRateCardItem[]
+
+  @@index([vendorId, engagementType, effectiveFrom])
+}
+
+model VendorRateCardItem {
+  id         String         @id @default(cuid())
+  rateCardId String
+  rateCard   VendorRateCard @relation(fields: [rateCardId], references: [id])
+  categoryId String
+  category   VehicleCategory @relation(fields: [categoryId], references: [id])
+
+  // DEDICATED_MONTHLY fields
+  fixedMonthlyAmount       Decimal?            @db.Decimal(12, 2)
+  includedKm               Int?
+  includedHours            Int?
+  extraKmRate              Decimal?            @db.Decimal(10, 2)
+  extraHourRate            Decimal?            @db.Decimal(10, 2)
+  driverOvertimeHourlyRate Decimal?            @db.Decimal(10, 2)
+  nightHaltRate            Decimal?            @db.Decimal(10, 2)
+  outstationBattaRate      Decimal?            @db.Decimal(10, 2)
+  fuelResponsibility       FuelResponsibility? @default(UCR_FUEL)
+
+  // SPOT_DUTY fields (slab-based; slabLabel = 'AIRPORT' for flat-rate rows)
+  slabLabel         String?
+  slabHours         Int?
+  slabKm            Int?
+  slabBaseRate      Decimal? @db.Decimal(10, 2)
+  extraKmRateSpot   Decimal? @db.Decimal(10, 2)
+  extraHourRateSpot Decimal? @db.Decimal(10, 2)
+
+  hsnSac    String   @default("996601")
+  createdAt DateTime @db.Timestamptz(3) @default(now())
+
+  deployments VehicleDeployment[]
+  duties      Duty[]
+
+  @@index([rateCardId, categoryId])
+}
+
+model VehicleDeployment {
+  id                     String    @id @default(cuid())
+  branchId               String
+  branch                 Branch    @relation(fields: [branchId], references: [id])
+  counterpartyType       CounterpartyType
+  vendorId               String?
+  vendor                 Vendor?   @relation(fields: [vendorId], references: [id])
+  customerId             String?
+  customer               Customer? @relation(fields: [customerId], references: [id])
+  vendorRateCardItemId   String?
+  vendorRateCardItem     VendorRateCardItem? @relation(fields: [vendorRateCardItemId], references: [id])
+  customerRateCardItemId String?
+  customerRateCardItem   RateCardItem?       @relation(fields: [customerRateCardItemId], references: [id])
+  rateSnapshotJson       Json
+  defaultDriverId        String?
+  defaultDriver          Driver?   @relation(fields: [defaultDriverId], references: [id])
+  startDate              DateTime @db.Timestamptz(3)
+  endDate                DateTime? @db.Timestamptz(3)
+  status                 String    @default("ACTIVE") // ACTIVE | ENDED | CANCELLED
+  openingOdometer        Int?
+  createdAt              DateTime @db.Timestamptz(3)  @default(now())
+  updatedAt              DateTime @db.Timestamptz(3)  @updatedAt
+  deletedAt              DateTime? @db.Timestamptz(3)
+
+  vehicleSegments     DeploymentVehicleSegment[]
+  duties              Duty[]
+  reconciliationLines ReconciliationLine[]
+
+  @@index([branchId, status])
+  @@index([vendorId])
+  @@index([customerId])
+}
+
+// The actual per-vehicle occupancy record within a deployment. A deployment
+// spans multiple segments when the vehicle is swapped mid-month (maintenance
+// etc); billing treats the deployment as continuous while attributing km to
+// whichever vehicle ran which days. This table (not VehicleDeployment
+// directly) is what the double-booking exclusion constraint guards.
+model DeploymentVehicleSegment {
+  id                String             @id @default(cuid())
+  deploymentId      String
+  deployment        VehicleDeployment  @relation(fields: [deploymentId], references: [id])
+  vehicleId         String
+  vehicle           Vehicle            @relation(fields: [vehicleId], references: [id])
+  startDate         DateTime @db.Timestamptz(3)
+  endDate           DateTime? @db.Timestamptz(3) // null = ongoing / current vehicle in the chain
+  openingOdometer   Int
+  closingOdometer   Int?
+  replacementReason String?
+  createdAt         DateTime @db.Timestamptz(3)           @default(now())
+
+  @@index([vehicleId, startDate])
+  @@index([deploymentId])
+}
+
+// The atomic unit of B2B work AND chauffeur B2C trips — one duty pipeline
+// for the whole business, born in the driver app, approved in the ERP.
+model Duty {
+  id       String     @id @default(cuid())
+  branchId String
+  branch   Branch     @relation(fields: [branchId], references: [id])
+  origin   DutyOrigin
+
+  bookingId    String?
+  booking      Booking?            @relation(fields: [bookingId], references: [id])
+  deploymentId String?
+  deployment   VehicleDeployment?  @relation(fields: [deploymentId], references: [id])
+  // Set directly for vendor SPOT_DUTY (no deployment involved).
+  vendorId             String?
+  vendor               Vendor?              @relation(fields: [vendorId], references: [id])
+  vendorRateCardItemId String?
+  vendorRateCardItem   VendorRateCardItem?  @relation(fields: [vendorRateCardItemId], references: [id])
+  rateSnapshotJson     Json?
+
+  driverId  String
+  driver    Driver  @relation(fields: [driverId], references: [id])
+  vehicleId String
+  vehicle   Vehicle @relation(fields: [vehicleId], references: [id])
+
+  status         DutyStatus @default(ASSIGNED)
+  scheduledStart DateTime @db.Timestamptz(3)
+  scheduledEnd   DateTime? @db.Timestamptz(3)
+
+  // Device timestamp (from the driver's phone) AND server-received
+  // timestamp are both kept — phone clocks drift, disputes need both.
+  deviceStartAt DateTime? @db.Timestamptz(3)
+  serverStartAt DateTime? @db.Timestamptz(3)
+  deviceEndAt   DateTime? @db.Timestamptz(3)
+  serverEndAt   DateTime? @db.Timestamptz(3)
+
+  openingOdometer         Int?
+  openingOdometerPhotoKey String?
+  closingOdometer         Int?
+  closingOdometerPhotoKey String?
+
+  startGpsLat Decimal? @db.Decimal(9, 6)
+  startGpsLng Decimal? @db.Decimal(9, 6)
+  endGpsLat   Decimal? @db.Decimal(9, 6)
+  endGpsLng   Decimal? @db.Decimal(9, 6)
+
+  passengerName    String?
+  passengerPhone   String?
+  routeRemarks     String?
+
+  passengerSignatureKey String?
+  driverFeedbackNote    String?
+  driverFeedbackTags    String[]
+
+  declineReason    String?
+  rejectionReason  String?
+  disputeReason    String?
+
+  // Idempotency key from the driver app's outbox — the server upserts on
+  // this so a duty synced 3x from a flaky connection is still one duty.
+  clientMutationId String @unique
+
+  createdAt DateTime @db.Timestamptz(3)  @default(now())
+  updatedAt DateTime @db.Timestamptz(3)  @updatedAt
+  deletedAt DateTime? @db.Timestamptz(3)
+
+  expenseEntries       DutyExpenseEntry[]
+  nightHalts           DutyNightHalt[]
+  odometerLogs         OdometerLog[]
+  reconciliationLines  ReconciliationLine[]
+  driverPayableEntries DriverPayableEntry[]
+  expenses             Expense[]
+  challans             Challan[]
+
+  @@index([driverId, status])
+  @@index([vehicleId, scheduledStart])
+  @@index([deploymentId])
+  @@index([status])
+}
+
+model DutyExpenseEntry {
+  id                   String          @id @default(cuid())
+  dutyId               String
+  duty                 Duty            @relation(fields: [dutyId], references: [id])
+  type                 DutyExpenseType
+  amount               Decimal         @db.Decimal(10, 2)
+  receiptPhotoKey      String?
+  reimbursableToDriver Boolean         @default(true)
+  clientMutationId     String          @unique
+  createdAt            DateTime @db.Timestamptz(3)        @default(now())
+
+  @@index([dutyId])
+}
+
+model DutyNightHalt {
+  id               String   @id @default(cuid())
+  dutyId           String
+  duty             Duty     @relation(fields: [dutyId], references: [id])
+  haltDate         DateTime @db.Timestamptz(3)
+  notes            String?
+  clientMutationId String   @unique
+  createdAt        DateTime @db.Timestamptz(3) @default(now())
+
+  @@index([dutyId])
+}
+
+// Per counterparty per month: the statement the vendor/customer reviews,
+// with line-level disputes and adjustments before it becomes an invoice.
+model MonthlyReconciliation {
+  id                   String               @id @default(cuid())
+  branchId             String
+  branch               Branch               @relation(fields: [branchId], references: [id])
+  counterpartyType     CounterpartyType
+  vendorId             String?
+  vendor               Vendor?              @relation(fields: [vendorId], references: [id])
+  customerId           String?
+  customer             Customer?            @relation(fields: [customerId], references: [id])
+  periodStart          DateTime @db.Timestamptz(3)
+  periodEnd            DateTime @db.Timestamptz(3)
+  status               ReconciliationStatus @default(DRAFT)
+  statementGeneratedAt DateTime? @db.Timestamptz(3)
+  finalizedAt          DateTime? @db.Timestamptz(3)
+  finalizedById        String?
+  finalizedBy          User?                @relation(fields: [finalizedById], references: [id])
+  invoiceId            String?              @unique
+  invoice              Invoice?             @relation(fields: [invoiceId], references: [id])
+  createdAt            DateTime @db.Timestamptz(3)             @default(now())
+  updatedAt            DateTime @db.Timestamptz(3)             @updatedAt
+
+  lines ReconciliationLine[]
+
+  @@unique([vendorId, customerId, periodStart, periodEnd])
+  @@index([branchId, status])
+}
+
+model ReconciliationLine {
+  id               String                  @id @default(cuid())
+  reconciliationId String
+  reconciliation   MonthlyReconciliation   @relation(fields: [reconciliationId], references: [id])
+  dutyId           String?
+  duty             Duty?                   @relation(fields: [dutyId], references: [id])
+  deploymentId     String?
+  deployment       VehicleDeployment?      @relation(fields: [deploymentId], references: [id])
+  description      String
+  computedAmount   Decimal                 @db.Decimal(12, 2)
+  claimedAmount    Decimal?                @db.Decimal(12, 2)
+  disputeStatus    ReconLineDisputeStatus  @default(NONE)
+  disputeReason    String?
+  adjustmentAmount Decimal                 @default(0) @db.Decimal(12, 2)
+  adjustmentReason String?
+  finalAmount      Decimal                 @db.Decimal(12, 2)
+  createdAt        DateTime @db.Timestamptz(3)                @default(now())
+  updatedAt        DateTime @db.Timestamptz(3)                @updatedAt
+
+  @@index([reconciliationId])
+}
+
+// ───────────────────────── B2C commercial ─────────────────────────
+
+model RateCard {
+  id            String       @id @default(cuid())
+  branchId      String
+  branch        Branch       @relation(fields: [branchId], references: [id])
+  type          RateCardType
+  effectiveFrom DateTime @db.Timestamptz(3)
+  effectiveTo   DateTime? @db.Timestamptz(3)
+  createdAt     DateTime @db.Timestamptz(3)     @default(now())
+  updatedAt     DateTime @db.Timestamptz(3)     @updatedAt
+
+  items RateCardItem[]
+
+  @@index([branchId, type, effectiveFrom])
+}
+
+model RateCardItem {
+  id         String          @id @default(cuid())
+  rateCardId String
+  rateCard   RateCard        @relation(fields: [rateCardId], references: [id])
+  categoryId String
+  category   VehicleCategory @relation(fields: [categoryId], references: [id])
+
+  // LOCAL_PACKAGE slabs
+  slabLabel     String?
+  slabHours     Int?
+  slabKm        Int?
+  slabBaseRate  Decimal? @db.Decimal(10, 2)
+  extraKmRate   Decimal? @db.Decimal(10, 2)
+  extraHourRate Decimal? @db.Decimal(10, 2)
+
+  // OUTSTATION
+  perKmRate         Decimal? @db.Decimal(10, 2)
+  minKmPerDay        Int?
+  driverBattaPerDay  Decimal? @db.Decimal(10, 2)
+  nightHaltRate      Decimal? @db.Decimal(10, 2)
+
+  // AIRPORT_TRANSFER
+  routeLabel String?
+  flatRate   Decimal? @db.Decimal(10, 2)
+
+  // FIXED_DUTY_MONTHLY (same shape as vendor DEDICATED_MONTHLY)
+  fixedMonthlyAmount Decimal? @db.Decimal(12, 2)
+  includedKm         Int?
+  includedHours      Int?
+  fixedExtraKmRate   Decimal? @db.Decimal(10, 2)
+  fixedExtraHourRate Decimal? @db.Decimal(10, 2)
+
+  hsnSac    String   @default("996601")
+  createdAt DateTime @db.Timestamptz(3) @default(now())
+
+  deployments VehicleDeployment[]
+  bookings    Booking[]
+
+  @@index([rateCardId, categoryId])
+}
+
+model Booking {
+  id             String        @id @default(cuid())
+  branchId       String
+  branch         Branch        @relation(fields: [branchId], references: [id])
+  bookingNumber  String        @unique
+  customerId     String
+  customer       Customer      @relation(fields: [customerId], references: [id])
+  type           BookingType
+  rateCardItemId String
+  rateCardItem   RateCardItem  @relation(fields: [rateCardItemId], references: [id])
+  rateSnapshotJson Json
+
+  status         BookingStatus @default(INQUIRY)
+  pickupLocation String
+  dropLocation   String?
+  pickupDateTime DateTime @db.Timestamptz(3)
+  dropDateTime   DateTime? @db.Timestamptz(3)
+  outstationDays Int?
+
+  quotedAmount             Decimal? @db.Decimal(12, 2)
+  advanceAmount            Decimal  @default(0) @db.Decimal(12, 2)
+  discountAmount           Decimal  @default(0) @db.Decimal(12, 2)
+  discountApprovedById     String?
+  discountApprovedBy       User?    @relation(fields: [discountApprovedById], references: [id])
+  cancellationChargeAmount Decimal? @db.Decimal(12, 2)
+
+  vehicleId String?
+  vehicle   Vehicle? @relation(fields: [vehicleId], references: [id])
+
+  createdAt DateTime @db.Timestamptz(3)  @default(now())
+  updatedAt DateTime @db.Timestamptz(3)  @updatedAt
+  deletedAt DateTime? @db.Timestamptz(3)
+
+  duties          Duty[]
+  invoices        Invoice[]
+  securityDeposit SecurityDeposit?
+  expenses        Expense[]
+  challans        Challan[]
+
+  @@index([branchId, status])
+  @@index([customerId])
+}
+
+// ───────────────────────── Money ─────────────────────────
+
+// Row-locked (SELECT ... FOR UPDATE inside the invoice-creation transaction)
+// per-financial-year counter — gives gap-free sequential invoice numbers
+// (UCR/2026-27/00001) without relying on a raw Postgres SEQUENCE, which can
+// skip on rollback.
+model NumberingSequence {
+  id            String @id @default(cuid())
+  series        String // "INVOICE" | "CREDIT_NOTE"
+  financialYear String // "2026-27"
+  lastNumber    Int    @default(0)
+
+  @@unique([series, financialYear])
+}
+
+// Three invoice types share this table: VENDOR_MONTHLY and
+// CUSTOMER_FIXED_DUTY_MONTHLY (born from a MonthlyReconciliation, annexure
+// attached) and BOOKING (born from a duty-completion settlement).
+// Immutable once ISSUED — corrections only via CreditNote.
+model Invoice {
+  id             String      @id @default(cuid())
+  branchId       String
+  branch         Branch      @relation(fields: [branchId], references: [id])
+  invoiceNumber  String      @unique
+  financialYear  String
+  sequenceNumber Int
+  type           InvoiceType
+
+  vendorId   String?
+  vendor     Vendor?   @relation(fields: [vendorId], references: [id])
+  customerId String?
+  customer   Customer? @relation(fields: [customerId], references: [id])
+  bookingId  String?
+  booking    Booking?  @relation(fields: [bookingId], references: [id])
+
+  supplierGstin           String
+  recipientGstin           String?
+  placeOfSupplyStateCode  String
+  taxType                 TaxType
+
+  issueDate DateTime @db.Timestamptz(3)      @default(now())
+  dueDate   DateTime? @db.Timestamptz(3)
+  status    InvoiceStatus @default(DRAFT)
+
+  subtotal           Decimal  @db.Decimal(12, 2)
+  taxableValue        Decimal  @db.Decimal(12, 2)
+  cgstAmount          Decimal  @default(0) @db.Decimal(12, 2)
+  sgstAmount          Decimal  @default(0) @db.Decimal(12, 2)
+  igstAmount          Decimal  @default(0) @db.Decimal(12, 2)
+  roundingAdjustment  Decimal  @default(0) @db.Decimal(12, 2)
+  totalAmount         Decimal  @db.Decimal(12, 2)
+  amountPaid          Decimal  @default(0) @db.Decimal(12, 2)
+  amountInWords       String?
+
+  pdfFileKey    String?
+  voidedAt      DateTime? @db.Timestamptz(3)
+  voidedById    String?
+  voidedBy      User?     @relation(fields: [voidedById], references: [id])
+  voidReason    String?
+
+  createdAt DateTime @db.Timestamptz(3) @default(now())
+  updatedAt DateTime @db.Timestamptz(3) @updatedAt
+
+  lineItems          InvoiceLineItem[]
+  reconciliation     MonthlyReconciliation?
+  paymentAllocations PaymentAllocation[]
+  creditNotes        CreditNote[]
+
+  @@index([branchId, status])
+  @@index([vendorId])
+  @@index([customerId])
+}
+
+model InvoiceLineItem {
+  id           String  @id @default(cuid())
+  invoiceId    String
+  invoice      Invoice @relation(fields: [invoiceId], references: [id])
+  description  String
+  hsnSac       String
+  quantity     Decimal @default(1) @db.Decimal(10, 2)
+  unitRate     Decimal @db.Decimal(12, 2)
+  taxableValue Decimal @db.Decimal(12, 2)
+  gstRatePct   Decimal @db.Decimal(5, 2)
+  cgstAmount   Decimal @default(0) @db.Decimal(12, 2)
+  sgstAmount   Decimal @default(0) @db.Decimal(12, 2)
+  igstAmount   Decimal @default(0) @db.Decimal(12, 2)
+  lineTotal    Decimal @db.Decimal(12, 2)
+  sortOrder    Int     @default(0)
+
+  @@index([invoiceId])
+}
+
+model CreditNote {
+  id               String   @id @default(cuid())
+  creditNoteNumber String   @unique
+  financialYear    String
+  sequenceNumber   Int
+  invoiceId        String
+  invoice          Invoice  @relation(fields: [invoiceId], references: [id])
+  reason           String
+  taxableValue     Decimal  @db.Decimal(12, 2)
+  cgstAmount       Decimal  @default(0) @db.Decimal(12, 2)
+  sgstAmount       Decimal  @default(0) @db.Decimal(12, 2)
+  igstAmount       Decimal  @default(0) @db.Decimal(12, 2)
+  totalAmount      Decimal  @db.Decimal(12, 2)
+  issueDate        DateTime @db.Timestamptz(3) @default(now())
+  issuedById       String
+  issuedBy         User     @relation(fields: [issuedById], references: [id])
+  pdfFileKey       String?
+  createdAt        DateTime @db.Timestamptz(3) @default(now())
+
+  lineItems CreditNoteLineItem[]
+
+  @@index([invoiceId])
+}
+
+model CreditNoteLineItem {
+  id           String     @id @default(cuid())
+  creditNoteId String
+  creditNote   CreditNote @relation(fields: [creditNoteId], references: [id])
+  description  String
+  amount       Decimal    @db.Decimal(12, 2)
+}
+
+model Payment {
+  id           String      @id @default(cuid())
+  branchId     String
+  branch       Branch      @relation(fields: [branchId], references: [id])
+  mode         PaymentMode
+  amount       Decimal     @db.Decimal(12, 2)
+  reference    String?
+  receivedAt   DateTime @db.Timestamptz(3)    @default(now())
+  receivedById String?
+  receivedBy   User?       @relation(fields: [receivedById], references: [id])
+  vendorId     String?
+  vendor       Vendor?     @relation(fields: [vendorId], references: [id])
+  customerId   String?
+  customer     Customer?   @relation(fields: [customerId], references: [id])
+  createdAt    DateTime @db.Timestamptz(3)    @default(now())
+
+  allocations PaymentAllocation[]
+
+  @@index([branchId, receivedAt])
+}
+
+// A payment can cover multiple invoices and an invoice can be paid across
+// multiple payments.
+model PaymentAllocation {
+  id        String   @id @default(cuid())
+  paymentId String
+  payment   Payment  @relation(fields: [paymentId], references: [id])
+  invoiceId String
+  invoice   Invoice  @relation(fields: [invoiceId], references: [id])
+  amount    Decimal  @db.Decimal(12, 2)
+  createdAt DateTime @db.Timestamptz(3) @default(now())
+
+  @@unique([paymentId, invoiceId])
+}
+
+model SecurityDeposit {
+  id         String    @id @default(cuid())
+  bookingId  String?   @unique
+  booking    Booking?  @relation(fields: [bookingId], references: [id])
+  vendorId   String?
+  vendor     Vendor?   @relation(fields: [vendorId], references: [id])
+  customerId String?
+  customer   Customer? @relation(fields: [customerId], references: [id])
+  amount     Decimal   @db.Decimal(12, 2)
+  status     String    @default("HELD") // HELD | REFUNDED | FORFEITED | PARTIALLY_REFUNDED
+  createdAt  DateTime @db.Timestamptz(3)  @default(now())
+  updatedAt  DateTime @db.Timestamptz(3)  @updatedAt
+
+  entries SecurityDepositEntry[]
+}
+
+model SecurityDepositEntry {
   id          String          @id @default(cuid())
-  category    ExpenseCategory
-  vehicle     Vehicle?        @relation(fields: [vehicleId], references: [id])
-  vehicleId   String?
-  description String
-  amount      Decimal         @db.Decimal(10, 2)
-  expenseDate DateTime        @default(now())
-  paidBy      String?
-  createdAt   DateTime        @default(now())
+  depositId   String
+  deposit     SecurityDeposit @relation(fields: [depositId], references: [id])
+  type        String // HOLD | REFUND | FORFEIT
+  amount      Decimal         @db.Decimal(12, 2)
+  reason      String?
+  createdById String?
+  createdBy   User?           @relation(fields: [createdById], references: [id])
+  createdAt   DateTime @db.Timestamptz(3)        @default(now())
+
+  @@index([depositId])
+}
+
+model Expense {
+  id             String          @id @default(cuid())
+  branchId       String
+  branch         Branch          @relation(fields: [branchId], references: [id])
+  category       ExpenseCategory
+  vehicleId      String?
+  vehicle        Vehicle?        @relation(fields: [vehicleId], references: [id])
+  dutyId         String?
+  duty           Duty?           @relation(fields: [dutyId], references: [id])
+  bookingId      String?
+  booking        Booking?        @relation(fields: [bookingId], references: [id])
+  description    String
+  amount         Decimal         @db.Decimal(12, 2)
+  expenseDate    DateTime @db.Timestamptz(3)        @default(now())
+  paidById       String?
+  paidBy         User?           @relation(fields: [paidById], references: [id])
+  receiptFileKey String?
+  createdAt      DateTime @db.Timestamptz(3)        @default(now())
+  deletedAt      DateTime? @db.Timestamptz(3)
+
+  @@index([branchId, category, expenseDate])
+}
+
+model MaintenanceJob {
+  id                String                @id @default(cuid())
+  vehicleId         String
+  vehicle           Vehicle               @relation(fields: [vehicleId], references: [id])
+  type              MaintenanceJobType
+  status            MaintenanceJobStatus  @default(OPEN)
+  description       String
+  cost              Decimal?              @db.Decimal(12, 2)
+  odometerAtService Int?
+  serviceDate       DateTime? @db.Timestamptz(3)
+  nextDueDate       DateTime? @db.Timestamptz(3)
+  nextDueOdometer   Int?
+  vendor            String?
+  createdAt         DateTime @db.Timestamptz(3)              @default(now())
+  updatedAt         DateTime @db.Timestamptz(3)              @updatedAt
+
+  @@index([vehicleId, status])
+}
+
+model Challan {
+  id                    String        @id @default(cuid())
+  vehicleId             String
+  vehicle               Vehicle       @relation(fields: [vehicleId], references: [id])
+  dutyId                String?
+  duty                  Duty?         @relation(fields: [dutyId], references: [id])
+  bookingId             String?
+  booking               Booking?      @relation(fields: [bookingId], references: [id])
+  challanNumber         String?
+  violationDate         DateTime @db.Timestamptz(3)
+  amount                Decimal       @db.Decimal(12, 2)
+  status                ChallanStatus @default(OPEN)
+  isRecoverable         Boolean       @default(false)
+  recoveredFromDriverId String?
+  recoveredFromDriver   Driver?       @relation(fields: [recoveredFromDriverId], references: [id])
+  notes                 String?
+  createdAt             DateTime @db.Timestamptz(3)      @default(now())
+  updatedAt             DateTime @db.Timestamptz(3)      @updatedAt
+
+  @@index([vehicleId])
+}
+
+// Per-duty batta, night-halt allowance, reimbursable tolls/parking, minus
+// advances — feeds a monthly driver payout statement (computed on the fly
+// from these entries; full payroll is out of scope for v1).
+model DriverPayableEntry {
+  id          String            @id @default(cuid())
+  driverId    String
+  driver      Driver            @relation(fields: [driverId], references: [id])
+  dutyId      String?
+  duty        Duty?             @relation(fields: [dutyId], references: [id])
+  type        DriverPayableType
+  amount      Decimal           @db.Decimal(12, 2) // positive = payable, negative = advance/deduction
+  periodMonth String // "2026-07"
+  notes       String?
+  createdAt   DateTime @db.Timestamptz(3)          @default(now())
+
+  @@index([driverId, periodMonth])
+}
+
+// Idempotency ledger for POST /driver/v1/sync — every batched offline
+// mutation carries its own clientMutationId; a cached hit here means the
+// item is returned without ever re-executing its side effects, however
+// many times the app retries the same batch.
+model SyncMutationLog {
+  id               String   @id @default(cuid())
+  clientMutationId String   @unique
+  driverAccountId  String
+  type             String
+  resultStatus     String // OK | ERROR
+  resultJson       Json?
+  createdAt        DateTime @db.Timestamptz(3) @default(now())
+
+  @@index([driverAccountId])
 }

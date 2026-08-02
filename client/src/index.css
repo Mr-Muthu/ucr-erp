@@ -3,5 +3,10 @@
 @tailwind utilities;
 
 body {
-  @apply bg-slate-100 text-slate-800;
+  @apply bg-slate-100 text-slate-800 antialiased;
+}
+
+/* Money and other numeric columns render with tabular figures, right-aligned via the .money-cell class used throughout. */
+.money-cell {
+  @apply text-right font-mono tabular-nums;
 }

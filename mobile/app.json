@@ -1,0 +1,43 @@
+{
+  "expo": {
+    "name": "UCR Driver",
+    "slug": "ucr-driver",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "scheme": "ucrdriver",
+    "userInterfaceStyle": "automatic",
+    "splash": {
+      "image": "./assets/images/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.ucrfleet.driver",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Used to capture odometer photos and receipts for duties.",
+        "NSPhotoLibraryUsageDescription": "Used to attach a photo from your library when a camera isn't available."
+      }
+    },
+    "android": {
+      "package": "com.ucrfleet.driver",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      }
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "static",
+      "favicon": "./assets/images/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}

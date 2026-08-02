@@ -1,0 +1,41 @@
+// Mirrors the web ops console's brand palette (client/tailwind.config.js) so
+// the two apps read as one product.
+export const colors = {
+  brand50: '#eef6ff',
+  brand100: '#d9ecff',
+  brand500: '#3186ff',
+  brand600: '#1a67f5',
+  brand700: '#1552e1',
+  slate50: '#f8fafc',
+  slate100: '#f1f5f9',
+  slate200: '#e2e8f0',
+  slate300: '#cbd5e1',
+  slate400: '#94a3b8',
+  slate500: '#64748b',
+  slate600: '#475569',
+  slate700: '#334155',
+  slate800: '#1e293b',
+  slate900: '#0f172a',
+  emerald100: '#d1fae5',
+  emerald700: '#047857',
+  amber100: '#fef3c7',
+  amber700: '#b45309',
+  red100: '#fee2e2',
+  red600: '#dc2626',
+  red700: '#b91c1c',
+  white: '#ffffff',
+};
+
+export const statusTone: Record<string, { bg: string; fg: string }> = {
+  ASSIGNED: { bg: colors.slate200, fg: colors.slate700 },
+  ACCEPTED: { bg: colors.brand100, fg: colors.brand700 },
+  DECLINED: { bg: colors.red100, fg: colors.red700 },
+  STARTED: { bg: colors.amber100, fg: colors.amber700 },
+  COMPLETED: { bg: colors.emerald100, fg: colors.emerald700 },
+  SUBMITTED: { bg: colors.brand100, fg: colors.brand700 },
+  REJECTED: { bg: colors.red100, fg: colors.red700 },
+  APPROVED: { bg: colors.emerald100, fg: colors.emerald700 },
+  DISPUTED: { bg: colors.red100, fg: colors.red700 },
+  RESOLVED: { bg: colors.brand100, fg: colors.brand700 },
+  BILLED: { bg: colors.emerald100, fg: colors.emerald700 },
+};
