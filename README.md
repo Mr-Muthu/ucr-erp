@@ -748,6 +748,13 @@ API — nothing hardcoded, no mock data.
 5. Build a signed Android AAB/APK for driver distribution (the current Expo
    build has already been verified on a real Android phone).
 
+> **Render plan requirement:** Render's Free plan can host the API and static
+> web application, but it cannot run the continuous BullMQ background worker
+> that generates PDFs and delivers notifications. A production deployment must
+> use a paid Render background-worker plan (or an equivalent always-on worker
+> host). The API start command applies Prisma migrations directly because
+> Render only supports `preDeployCommand` on paid services.
+
 ### Current verification
 
 `render.yaml` and the GitHub Actions workflow parse as valid YAML. Server,

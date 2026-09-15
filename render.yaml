@@ -5,8 +5,9 @@ services:
     region: singapore
     plan: free
     buildCommand: npm ci && npm run prisma:generate --workspace=server && npm run build --workspace=server
-    preDeployCommand: npm run prisma:deploy --workspace=server
-    startCommand: npm run start --workspace=server
+    # Render's free plan does not support preDeployCommand. Prisma migrations
+    # are idempotent, so applying them before each API start is safe.
+    startCommand: npm run prisma:deploy --workspace=server && npm run start --workspace=server
     healthCheckPath: /api/health
     envVars:
       - key: NODE_VERSION
