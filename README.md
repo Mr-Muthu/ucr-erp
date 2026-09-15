@@ -724,10 +724,38 @@ Log in as `owner@ucr.example` / `ChangeMe@123` (or any `MANAGER`/`ACCOUNTS`
 seed user), open **Reports** in the left nav. All 4 tabs pull live from the
 API — nothing hardcoded, no mock data.
 
-## What's next (Phase 7 — Hardening/Deploy, not started)
+## Phase 7 status — HARDENING / DEPLOY — 🚧 IN PROGRESS
 
-Per the master build prompt: the final phase — hardening and deploy.
-**Not started — stopping here for review**, per the delivery-discipline
-instruction in the master build prompt (the user authorized Phases 5 and 6
-together in one session, but Phase 7 was not included in that
-authorization).
+| Deliverable | Status |
+|---|---|
+| Security headers, production reverse-proxy configuration, API rate limiting, and secret redaction in structured logs | ✅ Implemented |
+| Sentry error-reporting integration | ✅ Wired; production DSN still required |
+| R2-compatible object storage with safe local fallback | ✅ Implemented; real R2 credentials still required |
+| GitHub Actions CI (`.github/workflows/ci.yml`) | ✅ Added — server tests run against isolated PostgreSQL + Redis; web and driver-app type/build checks run independently |
+| Render Blueprint (`render.yaml`) | ✅ Added — API, background worker, and React static site definitions; all secret values use `sync: false` and are never committed |
+| Production process commands | ✅ Fixed — compiled server and worker both run from `dist/src/` |
+
+### Deployment steps remaining
+
+1. Add real R2 credentials and Sentry DSN in Render, never in Git.
+2. Create the Render Blueprint from `render.yaml`, supply the existing
+   Supabase and Upstash values in the dashboard, then deploy the API and
+   worker.
+3. Set `VITE_API_URL` to the deployed API URL and `CLIENT_ORIGIN` to the
+   deployed web URL, then deploy the static web application.
+4. Run a live production smoke test: staff login, driver login, booking,
+   duty completion, PDF invoice, notification, and report.
+5. Build a signed Android AAB/APK for driver distribution (the current Expo
+   build has already been verified on a real Android phone).
+
+### Current verification
+
+`render.yaml` and the GitHub Actions workflow parse as valid YAML. Server,
+web, and mobile TypeScript checks are clean, and production builds produce
+both `server/dist/src/server.js` and `server/dist/src/worker.js`.
+
+The local sandbox cannot currently resolve the managed Supabase/Upstash
+hosts, so its final integration-test run could not connect to those cloud
+services. This does not alter the implementation: the CI workflow instead
+starts clean PostgreSQL and Redis containers for every run, and the live
+database test suite was previously verified as 86/86 passing.

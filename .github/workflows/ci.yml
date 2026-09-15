@@ -1,0 +1,98 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  server:
+    name: Server checks
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: ucr_erp
+          POSTGRES_USER: ucr
+          POSTGRES_PASSWORD: ucr_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ucr -d ucr_erp"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://ucr:ucr_password@localhost:5432/ucr_erp?schema=public&connection_limit=3
+      REDIS_URL: redis://localhost:6379
+      JWT_ACCESS_SECRET: ci-only-access-secret-not-for-production
+      JWT_REFRESH_SECRET: ci-only-refresh-secret-not-for-production
+      CLIENT_ORIGIN: http://localhost:5173
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Generate Prisma Client
+        run: npm run prisma:generate --workspace=server
+      - name: Apply database migrations
+        working-directory: server
+        run: npx prisma migrate deploy
+      - name: Apply database invariants Prisma cannot express
+        env:
+          PGPASSWORD: ucr_password
+        run: psql -h localhost -U ucr -d ucr_erp -f server/prisma/sql/constraints.sql
+      - name: Type-check server
+        run: npm run typecheck --workspace=server
+      - name: Run server tests
+        run: npm test --workspace=server
+
+  client:
+    name: Web application build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck --workspace=client
+      - run: npm run build --workspace=client
+
+  mobile:
+    name: Driver app type-check
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+      - run: npm ci
+      - run: npx tsc --noEmit

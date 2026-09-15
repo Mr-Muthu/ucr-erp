@@ -1,0 +1,94 @@
+services:
+  - type: web
+    runtime: node
+    name: ucr-fleet-erp-api
+    region: singapore
+    plan: free
+    buildCommand: npm ci && npm run prisma:generate --workspace=server && npm run build --workspace=server
+    preDeployCommand: npm run prisma:deploy --workspace=server
+    startCommand: npm run start --workspace=server
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: JWT_ACCESS_SECRET
+        sync: false
+      - key: JWT_REFRESH_SECRET
+        sync: false
+      - key: CLIENT_ORIGIN
+        sync: false
+      - key: R2_ENDPOINT
+        sync: false
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: R2_BUCKET
+        value: ucr-erp-documents
+      - key: SENTRY_DSN
+        sync: false
+      - key: COMPANY_LEGAL_NAME
+        value: Ulagammal Car Rental
+      - key: COMPANY_STATE_CODE
+        value: "27"
+      - key: FINANCIAL_YEAR_START_MONTH
+        value: "4"
+
+  - type: worker
+    runtime: node
+    name: ucr-fleet-erp-worker
+    region: singapore
+    plan: free
+    buildCommand: npm ci && npm run prisma:generate --workspace=server && npm run build --workspace=server
+    startCommand: npm run worker:start --workspace=server
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: JWT_ACCESS_SECRET
+        sync: false
+      - key: JWT_REFRESH_SECRET
+        sync: false
+      - key: R2_ENDPOINT
+        sync: false
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: R2_BUCKET
+        value: ucr-erp-documents
+      - key: SENTRY_DSN
+        sync: false
+
+  - type: web
+    runtime: static
+    name: ucr-fleet-erp-web
+    buildCommand: npm ci && npm run build --workspace=client
+    staticPublishPath: client/dist
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: VITE_API_URL
+        sync: false
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    headers:
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+      - path: /*
+        name: Referrer-Policy
+        value: strict-origin-when-cross-origin
