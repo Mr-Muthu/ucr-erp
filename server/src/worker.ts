@@ -1,6 +1,6 @@
 import './instrument.js';
 import * as Sentry from '@sentry/node';
-import { Worker } from 'bullmq';
+import { Job, Worker } from 'bullmq';
 import { redisConnection } from './lib/redis.js';
 import { JOB_NAMES, scheduleRecurringJobs } from './lib/queue.js';
 import { logger } from './lib/logger.js';
@@ -11,7 +11,7 @@ import { sendNotification } from './jobs/sendNotification.js';
 
 const documentsWorker = new Worker(
   'documents',
-  async (job) => {
+  async (job: Job) => {
     switch (job.name) {
       case JOB_NAMES.GENERATE_INVOICE_PDF:
         return generateInvoicePdf(job.data.invoiceId);
@@ -26,7 +26,7 @@ const documentsWorker = new Worker(
 
 const notificationsWorker = new Worker(
   'notifications',
-  async (job) => {
+  async (job: Job) => {
     switch (job.name) {
       case JOB_NAMES.SCAN_EXPIRIES:
         return scanExpiries();
